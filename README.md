@@ -43,8 +43,8 @@ Obtain the required x86 dependencies from their official sources.
 This repository contains the ASI plugin sources, host tests,
 launcher scripts and telemetry helper source.
 
-The current release also uses MW05_MozaBridge.dll.
-Its source and complete build instructions are not included yet.
+The release archive includes the ready-built MW05_MozaBridge.dll.
+The bridge's source code and build instructions are not published yet.
 
 The ASI build script currently targets an existing configured
 nfsmw-2005-sdk workspace; it is not a standalone build system.
