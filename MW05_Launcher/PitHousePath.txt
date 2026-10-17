@@ -1,0 +1,4 @@
+﻿# Optional: one full path to MOZA Pit House.exe, without quotes.
+# Leave blank if Pit House is already running.
+# Example (remove # only from the path, then correct it):
+# C:\Program Files\MOZA Pit House\bin\MOZA Pit House.exe

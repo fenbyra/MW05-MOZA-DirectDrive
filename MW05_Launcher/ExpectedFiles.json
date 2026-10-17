@@ -1,0 +1,37 @@
+{
+  "package": "MW05 MOZA DirectDrive v0.7.12 Public Release",
+  "binary_banner": "v0.7.12 RACE DIALOG TEST",
+  "launcher": "v1.2 portable; runtime unchanged; installation-check manifest updated",
+  "tested_game_sha256": "325304A2CDD5D1D5789C09C90D249774743D1B273889B1093339AC922D56A968",
+  "tested_game_bytes": 6029312,
+  "binaries": {
+    "MW05_MozaBridge.dll": "306d62d22936e249c455801675dc2ed3af7f32e9889899702860a7f44ffdf243",
+    "scripts/mw05_mirror_probe.asi": "824cc85bf58ed912e7a3a54428f0b8d990ef8457fe2ee201a9863b2515de0c0c"
+  },
+  "external_binaries": {
+    "MOZA_SDK.dll": {
+      "tested_sha256": "74fa7681cd7a529d6bb361dcb2f7a019d1db1cdf67ad33b0efb34db71c197e3b",
+      "tested_bytes": 3677696,
+      "source": "https://mozaracing.com/pages/sdk",
+      "note": "Not bundled. Obtain official Racing SDK MSVC2022-32/x86 DLL. A different hash is unverified, not necessarily corrupt."
+    },
+    "dinput8.dll": {
+      "tested_sha256": "4e5221228d9fd832d7489e43d0ba18ca6071aa24011c52983f5c9197113e0b05",
+      "tested_bytes": 1022464,
+      "source": "https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases",
+      "note": "Not bundled. Install official Win32/x86 dinput8. New official loader versions were not tested here; old user copy not redistributed."
+    }
+  },
+  "ini_changes_from_tested_install": [
+    "Diagnostics=1 -> 0 only; WheelRangeDegrees=720 retained"
+  ],
+  "not_bundled": [
+    "MOZA_SDK.dll",
+    "dinput8.dll",
+    "speed.exe",
+    "game assets",
+    "MOZA Pit House installer",
+    "Windows system DLLs",
+    "personal logs"
+  ]
+}

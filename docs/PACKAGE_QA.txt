@@ -1,0 +1,22 @@
+v0.7.12 public packaging QA
+
+Supplied tested ASI/bridge copied byte-for-byte. Embedded TEST banner preserved.
+No real Windows/game/physical-device run performed during packaging.
+User reports several races/pursuits without newly found bugs on this version.
+Previously prepared source suite passes, including 244 live-plugin mock groups;
+host mocks are not real Windows threads/SDK or proof of every game's state.
+New official external SDK/loader versions not tested as a clean install here.
+
+Launcher runtime scripts and marker source unchanged from supplied working set.
+Check_Installation.ps1 extended for separately acquired external dependencies;
+manifest updated from obsolete v0.7.8 values. PowerShell edits statically reviewed,
+not executed in Windows here. Run Check_Installation.cmd before first launch.
+Game/hash mismatch warns, bundled binary/hash mismatch fails. External non-x86
+fails, external different hash warns as an unverified version, not corruption.
+
+Only INI change: Diagnostics=1 ->0. Original angle720 and functional options kept.
+No personal logs, actual user-specific paths, SDK DLL, old loader or game files.
+Checksums cover every package file except SHA256SUMS itself.
+
+scripts/mw05_mirror_probe.asi: PE32/x86; bytes=402133; SHA256=824cc85bf58ed912e7a3a54428f0b8d990ef8457fe2ee201a9863b2515de0c0c; imports=KERNEL32.dll, msvcrt.dll, USER32.dll, WS2_32.dll
+MW05_MozaBridge.dll: PE32/x86; bytes=87040; SHA256=306d62d22936e249c455801675dc2ed3af7f32e9889899702860a7f44ffdf243; imports=MOZA_SDK.dll, KERNEL32.dll

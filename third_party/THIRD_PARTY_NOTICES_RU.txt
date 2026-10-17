@@ -1,0 +1,27 @@
+﻿Сторонние компоненты и источники
+
+MOZA_SDK.dll не включена: разрешение MOZA на публичную перепаковку ожидается.
+MW05_MozaBridge.dll импортирует SDK динамически; сама DLL SDK не встроена
+в этот архив. Мост предоставлен владельцем проекта; его байты сохранены.
+MOZA Racing SDK: https://mozaracing.com/pages/sdk
+
+Старая dinput8.dll не включена: точный исходный тег/коммит её сборки неизвестен.
+Загрузчик устанавливается отдельно из официальных релизов Win32/x86:
+https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases
+
+ASI построен на nfsmw-2005-sdk (s-b-repo), BSD-3-Clause; MinHook и HDE имеют
+собственные BSD-условия. Лицензионные уведомления приложены. У SDK указано
+происхождение части материалов из NFSPluginSDK (Berkay Yigit); приложено
+исходное BSD-3 уведомление из публичного репозитория NFSPluginSDK.
+Точный коммит зависимостей пользовательского бинарника не установлен;
+эти уведомления не являются сертификатом полной юридической проверки.
+
+https://github.com/s-b-repo/nfsmw-2005-sdk
+https://github.com/s-b-repo/nfsmw-2005-sdk/blob/main/LICENSE
+https://github.com/s-b-repo/nfsmw-2005-sdk/blob/main/extern/minhook/LICENSE.txt
+https://github.com/berkayylmao/NFSPluginSDK/blob/master/LICENSE
+
+Приложенные BSD-тексты относятся к названным компонентам, не к MOZA SDK,
+игре или автоматически всему проекту. Новая общая лицензия на чужие компоненты
+не назначается. Авторские права/товарные знаки принадлежат правообладателям.
+Пакет не содержит speed.exe/игровых ресурсов и не является продуктом EA/MOZA.
