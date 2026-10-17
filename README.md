@@ -65,6 +65,17 @@ It is our own helper, not a Forza game binary.
 Read the installation instructions before using telemetry.
 Disable automatic preset loading in Pit House first.
 
+## Reporting issues
+
+Please include:
+- Game executable version or SHA256.
+- MOZA hardware and Pit House version.
+- Mod version.
+- Steps to reproduce.
+- Relevant logs with personal paths reviewed or removed.
+
+Do not upload game executables or proprietary SDK files.
+
 ## License and third-party components
 
 Original project code is licensed under BSD-3-Clause.
