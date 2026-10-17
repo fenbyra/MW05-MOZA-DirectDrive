@@ -1,0 +1,32 @@
+# Build output
+build/
+build-*/
+.vs/
+CMakeFiles/
+CMakeCache.txt
+
+# Compiled files
+*.asi
+*.dll
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+*.lib
+*.a
+
+# Local logs and backups
+*.log
+backups/
+*.bak
+*.tmp
+
+# Release archives are attached to GitHub Releases
+*.zip
+*.7z
+
+# Editor and OS files
+.vscode/
+Thumbs.db
+Desktop.ini
