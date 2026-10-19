@@ -1,0 +1,32 @@
+MW05 MOZA DirectDrive v0.7.16 — UPDATE ONLY
+
+Requires the existing v0.7.12 public installation and official x86 dependencies.
+This update fixes Drag input loss and adds Drag HUD RPM LED telemetry.
+
+INSTALL:
+1. Close the game. Back up these two existing files OUTSIDE the game folder:
+   scripts/mw05_mirror_probe.asi
+   MW05_Launcher/ExpectedFiles.json
+2. Copy the CONTENTS of COPY_TO_GAME into the game root next to speed.exe.
+   Replace the ASI and ExpectedFiles.json. Do NOT copy the outer release folder.
+3. Keep one DirectDrive ASI only. Do NOT replace INI, bridge DLL, launcher scripts,
+   MOZA_SDK.dll, dinput8.dll or speed.exe. Existing Pit House settings remain.
+4. Use your normal launcher. Test normal driving, Drag, then return to free roam.
+   The log intentionally says v0.7.16 DRAG TELEMETRY TEST 1.
+5. On regression close the game and restore BOTH backed-up files.
+
+ExpectedFiles.json is updated for the ASI included here; the unchanged bridge
+hash and tested external/game hashes are inherited from the v0.7.12 package.
+Do not use this manifest with an arbitrary rebuilt ASI or modified bridge.
+The game/Pit House/device setup remains limited to the project owner's test setup.
+UDP send success alone is not receiver acknowledgement. No custom motor FFB.
+
+РУССКИЙ:
+Это обновление, а не полный установщик. Для новой установки сначала установите
+публичную v0.7.12 и её официальные x86-зависимости.
+Закройте игру. Сохраните вне игры старый ASI и MW05_Launcher/ExpectedFiles.json.
+Перенесите содержимое COPY_TO_GAME в корень игры с заменой этих двух файлов.
+INI, DLL, EXE и скрипты launcher не менять. Вторую копию ASI не оставлять.
+Надпись DRAG TELEMETRY TEST 1 сохранена у проверенной сборки v0.7.16.
+Проверьте обычную езду, дрэг и возврат без перезапуска. При проблеме верните ОБА файла.
+Подробности — RELEASE_NOTES.md. Личные логи и сторонние DLL в архив не включены.

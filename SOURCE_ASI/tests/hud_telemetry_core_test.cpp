@@ -14,6 +14,7 @@ bool read(p::Address a,void*out,std::size_t n){auto*b=static_cast<unsigned char*
   if(mutation==1)put(widget,std::uint32_t{0});
   if(mutation==2)put(widget+0x30,std::uint32_t{0});
   if(mutation==3)put(p::kImageBase+s::kSimFlagsRva,std::uint32_t{2});
+  if(mutation==5)put(input,p::kImageBase+p::kPlayerInputVtableRva);
   if(mutation==4)put(p::kImageBase+p::kVehicleListRva,p::VehicleEntry{});
  }return true;}
 p::Player player(){return {p::ResolveStatus::Unique,car,input,input+8};}
@@ -62,5 +63,26 @@ int main(){unsigned tests=0;
  other=good;other.vehicle+=0x100;h::publish(cache,other,1950);assert(cache.latest.status==h::Status::Ok&&!cache.ambiguous);++tests;
  h::publish(cache,h::failure(h::Status::ReadFailed),2000);assert(h::select(cache,2050,player(),context(),true).status==h::Status::ReadFailed);++tests;
  cache=h::Cache{};h::publish(cache,good,0xFFFFFFF0u);assert(h::select(cache,0x20,player(),context(),true).status==h::Status::Ok);++tests;
+ // Drag uses the same validated RPM fields but a distinct widget class and player type.
+ auto dragSetup=[](){setup();put(input,p::kImageBase+p::kDragInputVtableRva);
+   put(widget,p::kImageBase+h::kDragVtableRva);put(widget+0x30,p::kImageBase+h::kDragSecondaryRva);};
+ auto dragSample=[](){return h::sample(p::kImageBase,p::resolvePlayer(p::kImageBase,&read),widget,&read,h::Source::Drag);};
+ dragSetup();const auto dragBefore=mem;const auto dragGood=dragSample();
+ assert(dragGood.status==h::Status::Ok && dragGood.current==800 && dragGood.inputVtable==p::kImageBase+p::kDragInputVtableRva && mem==dragBefore);++tests;
+ for(auto off:{0u,0x30u}){dragSetup();put(widget+off,std::uint32_t{0});assert(dragSample().status==h::Status::LayoutMismatch);}++tests;
+ for(auto off:{0x54u,0x58u,0x5Cu,0x60u,0x18u,0x1Cu,0x20u,0x24u}){dragSetup();mem.erase(widget+off);assert(dragSample().status==h::Status::ReadFailed);}++tests;
+ for(float bad:{-1.f,100001.f,std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}){
+   for(auto off:{0x54u,0x58u,0x5Cu}){dragSetup();put(widget+off,bad);assert(dragSample().status==h::Status::ValueRejected);}
+ }++tests;
+ for(auto off:{0x58u,0x5Cu}){dragSetup();put(widget+off,0.f);assert(dragSample().status==h::Status::ValueRejected);}++tests;
+ for(int gear:{-1,10}){dragSetup();put(widget+0x60,gear);assert(dragSample().status==h::Status::ValueRejected);}++tests;
+ dragSetup();put(widget+0x18,std::uint32_t{0});assert(dragSample().status==h::Status::Inactive);++tests;
+ for(int change=1;change<=5;++change){dragSetup();mutation=change;assert(dragSample().status==h::Status::ChangedDuringRead);}++tests;
+ dragSetup();put(input,p::kImageBase+p::kPlayerInputVtableRva);
+ assert(dragSample().status==h::Status::ChangedDuringRead);++tests;
+ cache=h::Cache{};h::publish(cache,dragGood,1000);auto normal=player();normal.inputVtable=p::kImageBase+p::kPlayerInputVtableRva;
+ assert(h::select(cache,1000,normal,context(),true).status==h::Status::OwnerChanged);++tests;
+ auto typed=good;typed.widget=dragGood.widget+0x100;h::publish(cache,typed,1001);
+ assert(!cache.ambiguous && cache.latest.status==h::Status::Ok);++tests;
  std::printf("PASS: %u read-only HUD core groups\n",tests);
 }

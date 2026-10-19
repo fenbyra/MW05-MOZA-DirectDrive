@@ -17,6 +17,15 @@ constexpr p::Address kFetchCallRva = 0x002A8D89u;
 constexpr p::Address kReverseSwapRva = 0x0029CFB6u;
 constexpr p::Address kOwnerOffset = 0x48u; // IInput is InputPlayer+48.
 constexpr p::Address kOwnerVtableRva = 0x004AC6BCu;
+constexpr p::Address kDragOwnerVtableRva = 0x004AC754u;
+constexpr p::Address kDragCtorRva = 0x002B8D06u;
+constexpr p::Address kDragFetchRva = 0x002A8E70u;
+constexpr unsigned char kDragCtor[] = {
+    0xC7,0x06,0x54,0xC7,0x8A,0x00,0xC7,0x46,0x08,0x4C,0xC7,0x8A,0x00,
+    0xC7,0x46,0x48,0x08,0xC7,0x8A,0x00,0xC7,0x46,0x74,0xF0,0xC6,0x8A,0x00
+};
+// Drag fetch delegates directly to the same base fetch, hence the same native helper.
+constexpr unsigned char kDragFetch[] = {0xE9,0xFB,0xF9,0xFF,0xFF};
 constexpr p::Address kSetGasRva = 0x0029CB90u;
 constexpr p::Address kSetBrakeRva = 0x0029CBA0u;
 constexpr unsigned char kHelperEntry[] = {
@@ -37,14 +46,25 @@ constexpr unsigned char kSetBrakeCode[] = {
     0x8B,0x44,0x24,0x04,0x89,0x41,0x20,0xC2,0x04,0x00
 };
 
-inline bool settersMatch(p::Address base, p::ReadMemory read) {
+inline bool settersMatch(p::Address base, p::ReadMemory read, p::Address inputVtable=0) {
+    if(inputVtable==0)inputVtable=base+p::kPlayerInputVtableRva;
     p::Address gas = 0, brake = 0;
-    return base == p::kImageBase && read &&
-        d::readValue(read, base + p::kPlayerInputVtableRva + 6u*4, gas) &&
-        d::readValue(read, base + p::kPlayerInputVtableRva + 7u*4, brake) &&
+    return base == p::kImageBase && read && p::supportedInputVtable(base,inputVtable) &&
+        d::readValue(read, inputVtable + 6u*4, gas) &&
+        d::readValue(read, inputVtable + 7u*4, brake) &&
         gas == base + kSetGasRva && brake == base + kSetBrakeRva &&
         d::matches(read, gas, kSetGasCode) &&
         d::matches(read, brake, kSetBrakeCode);
+}
+inline bool dragFingerprint(p::Address base, p::ReadMemory read) {
+    p::Address getter=0,steer=0;
+    return base==p::kImageBase && read &&
+        d::matches(read,base+kDragCtorRva,kDragCtor) &&
+        d::matches(read,base+kDragFetchRva,kDragFetch) &&
+        d::readValue(read,base+p::kDragInputVtableRva+2u*4,getter) &&
+        getter==base+p::kGetControlsRva &&
+        d::readValue(read,base+p::kDragInputVtableRva+5u*4,steer) &&
+        steer==0x0069CB80u && settersMatch(base,read,base+p::kDragInputVtableRva);
 }
 inline bool fingerprint(p::Address base, p::ReadMemory read) {
     return base == p::kImageBase && read &&
@@ -56,13 +76,16 @@ inline bool fingerprint(p::Address base, p::ReadMemory read) {
 }
 inline bool ownerMatches(p::Address base, const p::Player& player,
                          p::Address owner, p::ReadMemory read) {
-    p::Address vtable = 0;
+    p::Address vtable = 0,inputVtable=0;
     return base == p::kImageBase &&
         player.status == p::ResolveStatus::Unique &&
         p::pointerLike(owner) && owner <= 0xFFFFFE00u &&
         owner + kOwnerOffset == player.input &&
         d::readValue(read, owner, vtable) &&
-        vtable == base + kOwnerVtableRva;
+        d::readValue(read, player.input, inputVtable) &&
+        (player.inputVtable==0 || player.inputVtable==inputVtable) &&
+        ((vtable==base+kOwnerVtableRva && inputVtable==base+p::kPlayerInputVtableRva) ||
+         (vtable==base+kDragOwnerVtableRva && inputVtable==base+p::kDragInputVtableRva));
 }
 struct EnginePedals {
     bool valid = false, reverse = false;

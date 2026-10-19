@@ -24,6 +24,7 @@ float nativeGasArg = 0, nativeBrakeArg = 0;
 void (*duringNative)() = nullptr;
 void (*onFinalGate)() = nullptr;
 void (*duringEnable)() = nullptr;
+p::Address failProtectOnceAt = 0;
 bool failWrites = false, failPedals = false, partialPedalsOnce = false;
 p::Address failFloatAddress = 0;
 DWORD advanceOnControlsRead = 0, advanceOnSteerWrite = 0;
@@ -76,6 +77,17 @@ void hudFixture(p::Address w=hudWidget) {
     put(p::kImageBase+0x17A708,hud::kRatio);put(p::kImageBase+0x17A75B,hud::kThreshold);
     put(p::kImageBase+0x19EA1E,hud::kLayout);put(p::kImageBase+0x19EA41,hud::kCtor);
 }
+void dragHudFixture(p::Address w=hudWidget) {
+    put(w,p::kImageBase+hud::kDragVtableRva);put(w+0x30,p::kImageBase+hud::kDragSecondaryRva);
+    put(w+0x54,800.0f);put(w+0x58,6400.0f);put(w+0x5C,7400.0f);put(w+0x60,2);
+    put(w+0x18,std::uint32_t{2});put(w+0x1C,std::uint32_t{0});put(w+0x20,std::uint32_t{2});put(w+0x24,std::uint32_t{0});
+    put(p::kImageBase+hud::kDragTickRva,hud::kDragEntry);
+    put(p::kImageBase+0x17D2DB,hud::kDragReturn);
+    put(p::kImageBase+hud::kDragVtableRva,hud::kDragVtable);put(p::kImageBase+hud::kDragSecondaryRva,hud::kDragSecondary);
+    put(p::kImageBase+0x17D144,hud::kDragRatio);put(p::kImageBase+0x17D19F,hud::kThreshold);
+    put(p::kImageBase+0x1A0F3E,hud::kLayout);put(p::kImageBase+0x1A0F87,hud::kDragSecondaryCtor);
+    put(p::kImageBase+0x1A0F9A,hud::kDragCtor);
+}
 void addCar(unsigned i,p::Address object,p::Address in) {
     put(p::kImageBase+p::kVehicleListRva+i*8,p::VehicleEntry{object,1,{0,0,0}});
     put(object,p::kImageBase+p::kVehicleVtableRva);
@@ -111,9 +123,18 @@ void directionMemory() {
     put(p::kImageBase+direction::kSetBrakeRva,direction::kSetBrakeCode);
     put(p::kImageBase+p::kPlayerInputVtableRva+6*4,p::kImageBase+direction::kSetGasRva);
     put(p::kImageBase+p::kPlayerInputVtableRva+7*4,p::kImageBase+direction::kSetBrakeRva);
+    put(p::kImageBase+drive::kDragTransmissionCtorRva,drive::kDragTransmissionCtor);
+    put(p::kImageBase+direction::kDragCtorRva,direction::kDragCtor);
+    put(p::kImageBase+direction::kDragFetchRva,direction::kDragFetch);
+    put(p::kImageBase+p::kDragInputVtableRva+2*4,p::kImageBase+p::kGetControlsRva);
+    put(p::kImageBase+p::kDragInputVtableRva+5*4,std::uint32_t{0x0069CB80u});
+    put(p::kImageBase+p::kDragInputVtableRva+6*4,p::kImageBase+direction::kSetGasRva);
+    put(p::kImageBase+p::kDragInputVtableRva+7*4,p::kImageBase+direction::kSetBrakeRva);
 }
 void reset() {
     g_hudOriginal=nullptr;g_hudInstalled=false;g_hudCache=hud::Cache{};
+    g_dragHudOriginal=nullptr;g_dragHudInstalled=false;g_dragHudCache=hud::Cache{};
+    g_dragHudCalls=g_dragHudCaptures=g_dragHudAttemptAt=0;g_dragHudAttempted=false;g_dragHudAttemptWidget=0;
     g_hudCalls=g_hudCaptures=g_hudAttemptAt=0;g_hudAttempted=false;g_hudAttemptWidget=0;
     hudNativeCalls=0;hudSelf=nullptr;hudArg=0;hudChangeValue=hudPause=false;
     memory.clear(); messages.clear(); attemptedWrites.clear(); clock=1000;
@@ -124,6 +145,7 @@ void reset() {
     nativeCalls=mhCreates=mhEnables=mhRemoves=0;
     nativeGasArg=nativeBrakeArg=0;
     duringNative=onFinalGate=duringEnable=nullptr;
+    failProtectOnceAt=0;
     failWrites=failPedals=partialPedalsOnce=false; failFloatAddress=0;
     advanceOnControlsRead=advanceOnSteerWrite=0; memoryWrites=0;
     cfgUdp=0;cfgPort=20066;g_udpEnabled=false;g_udpPort=20066;
@@ -215,13 +237,14 @@ int nfsmw__mh_ensure_init() { return qa::mhInitOk ? 1:0; }
 MH_STATUS MH_CreateHook(void* target,void*,void** original) {
     ++qa::mhCreates;
     if (qa::mhCreateStatus==MH_OK)
-        *original=qa::mhNullTrampoline ? nullptr:(target==ptr(p::kImageBase+hud::kTickRva) ? reinterpret_cast<void*>(&qa::nativeHud):target==ptr(p::kImageBase+menu::kReaderRva) ? reinterpret_cast<void*>(&qa::nativeMenu):reinterpret_cast<void*>(&qa::nativeDirection));
+        *original=qa::mhNullTrampoline ? nullptr:((target==ptr(p::kImageBase+hud::kTickRva) || target==ptr(p::kImageBase+hud::kDragTickRva)) ? reinterpret_cast<void*>(&qa::nativeHud):target==ptr(p::kImageBase+menu::kReaderRva) ? reinterpret_cast<void*>(&qa::nativeMenu):reinterpret_cast<void*>(&qa::nativeDirection));
     return qa::mhCreateStatus;
 }
 MH_STATUS MH_EnableHook(void*) {
     ++qa::mhEnables;
     assert(g_directionOriginal==&qa::nativeDirection); // Published before enable.
     if(g_hudOriginal)assert(g_hudOriginal==&qa::nativeHud);
+    if(g_dragHudOriginal)assert(g_dragHudOriginal==&qa::nativeHud);
     if (qa::duringEnable) qa::duringEnable();
     return qa::mhEnableStatus;
 }
@@ -265,7 +288,10 @@ void OutputDebugStringA(const char* s) { qa::messages.emplace_back(s); }
 HWND GetForegroundWindow() { return qa::focused ? reinterpret_cast<void*>(2):nullptr; }
 DWORD GetWindowThreadProcessId(HWND,DWORD* pid) { *pid=10; return 20; }
 DWORD GetCurrentProcessId() { return 10; }
-BOOL VirtualProtect(void*,SIZE_T,DWORD,DWORD* old) { *old=0x20; return 1; }
+BOOL VirtualProtect(void* a,SIZE_T,DWORD,DWORD* old) {
+    if(qa::failProtectOnceAt && address(a)==qa::failProtectOnceAt){qa::failProtectOnceAt=0;return 0;}
+    *old=0x20; return 1;
+}
 DWORD GetLastError() { return 126; }
 void* InterlockedCompareExchangePointer(void* volatile* where,void* desired,void* expected) {
     const auto a=address(const_cast<void**>(where));
@@ -1476,6 +1502,233 @@ int main() {
     qa::put(p::kImageBase+session::kSimFlagsRva,std::uint32_t{0x10});
     const auto blockedDialogWrites=qa::memoryWrites;onPoll();
     assert(!g.armed && qa::memoryWrites==blockedDialogWrites);++tests;
+
+    // Diagnostic logging does not relax identity, write memory, or scan stale rows.
+    qa::reset(); g_reportIntervalMs=200; g.requested=true;
+    qa::put(qa::input,std::uint32_t{0x008AB5C8u});
+    updatePlayer(false); const auto diagWrites=qa::memoryWrites;
+    diagnosePlayerRows(qa::clock);
+    assert(qa::logged("reject=input-vtable") && qa::logged("header_stable=1") &&
+           !g.armed && g.player.status==p::ResolveStatus::NoPlayer &&
+           qa::memoryWrites==diagWrites); ++tests;
+    auto diagMessages=qa::messages.size(); diagnosePlayerRows(qa::clock+999);
+    assert(qa::messages.size()==diagMessages); ++tests;
+    diagnosePlayerRows(qa::clock+1000);
+    assert(qa::messages.size()>diagMessages && qa::memoryWrites==diagWrites); ++tests;
+    qa::reset(); g_reportIntervalMs=200; g.requested=true;
+    qa::put(qa::input,std::uint32_t{0x008AB5C8u});
+    qa::put(qa::car,std::uint32_t{0x008AA9DCu});updatePlayer(false);
+    diagnosePlayerRows(qa::clock);assert(qa::logged("reject=car-vtable")); ++tests;
+    qa::reset();g_reportIntervalMs=200;g.requested=true;
+    qa::put(p::kImageBase+p::kVehicleContainerRva+12,std::uint32_t{161});
+    updatePlayer(false);diagMessages=qa::messages.size();diagnosePlayerRows(qa::clock);
+    assert(qa::messages.size()==diagMessages+1 && !qa::logged("RESOLVER_ROW")); ++tests;
+    qa::reset();g_reportIntervalMs=200;g.requested=true;
+    qa::put(p::kImageBase+p::kVehicleContainerRva+12,std::uint32_t{0});
+    updatePlayer(false);diagnosePlayerRows(qa::clock);
+    assert(!qa::logged("RESOLVER_ROW") && qa::logged("header_stable=1")); ++tests;
+    qa::reset();g_reportIntervalMs=5000;g.requested=true;
+    qa::put(qa::input,std::uint32_t{0x008AB5C8u});updatePlayer(false);
+    diagMessages=qa::messages.size();diagnosePlayerRows(qa::clock);
+    assert(qa::messages.size()==diagMessages); ++tests;
+
+    // v0.7.14: observed drag subtype, same base controls, paired owner, both getter slots.
+    auto dragType=[] {
+        qa::put(qa::input,p::kImageBase+p::kDragInputVtableRva);
+        qa::put(qa::input-direction::kOwnerOffset,p::kImageBase+direction::kDragOwnerVtableRva);
+    };
+    auto normalType=[] {
+        qa::put(qa::input,p::kImageBase+p::kPlayerInputVtableRva);
+        qa::put(qa::input-direction::kOwnerOffset,p::kImageBase+direction::kOwnerVtableRva);
+    };
+    qa::reset();qa::arm();qa::writeLive();const auto modeSwitchWrites=qa::memoryWrites;
+    dragType();onPoll();
+    assert(!g.armed && g.requested && g.resumeImmediate && !g.directionSeen &&
+           g.player.inputVtable==p::kImageBase+p::kDragInputVtableRva &&
+           qa::memoryWrites==modeSwitchWrites);++tests;
+    qa::publish(0,-16384,225);qa::fetch();onPoll();assert(g.armed);++tests;
+    qa::fetch();getControlsHook(ptr(qa::input),nullptr);
+    assert(qa::nativeGasArg>0.49f && qa::nativeBrakeArg>0.24f &&
+           qa::get<float>(qa::controls+4)==0.5f && qa::get<float>(qa::controls+0x14)>0.49f);++tests;
+    const auto dragDrive=drive::sample(g_base,g.player,&readMemory);
+    assert(dragDrive.status==drive::Status::Ok &&
+           direction::ownerMatches(g_base,g.player,qa::input-direction::kOwnerOffset,&readMemory));++tests;
+    const auto returnWrites=qa::memoryWrites;normalType();onPoll();
+    assert(!g.armed && g.requested && !g.directionSeen && qa::memoryWrites==returnWrites);++tests;
+    qa::publish(0,-32768,120);qa::fetch();onPoll();assert(g.armed);++tests;
+    getControlsHook(ptr(qa::input),nullptr);
+    assert(qa::get<float>(qa::controls+4)>0.26f && qa::get<float>(qa::controls+0x14)>0.49f);++tests;
+    qa::reset();dragType();onPoll();qa::arm();qa::writeLive();
+    qa::put(qa::input-direction::kOwnerOffset,p::kImageBase+direction::kOwnerVtableRva);
+    qa::fetch();assert(!g.armed && !g.requested && qa::nativeGasArg==0 && qa::nativeBrakeArg==0);
+    qa::assertZeros();++tests;
+    qa::reset();qa::put(qa::input-direction::kOwnerOffset,p::kImageBase+direction::kDragOwnerVtableRva);
+    assert(!direction::ownerMatches(g_base,g.player,qa::input-direction::kOwnerOffset,&readMemory));++tests;
+    qa::reset();dragType();onPoll();qa::arm();qa::writeLive();
+    qa::put(p::kImageBase+p::kDragInputVtableRva+6*4,std::uint32_t{0});
+    qa::fetch();assert(!g.armed && !g.requested);++tests;
+    qa::reset();qa::put(qa::input,std::uint32_t{0x008AB5C8});onPoll();
+    assert(g.player.status==p::ResolveStatus::NoPlayer && !g.armed);++tests;
+    qa::reset();dragType();qa::addCar(1,0x04110000,0x04120000);
+    qa::put(0x04120000,p::kImageBase+p::kDragInputVtableRva);onPoll();
+    assert(g.player.status==p::ResolveStatus::Ambiguous && !g.armed);++tests;
+    qa::reset();dragType();onPoll();qa::arm();qa::writeLive();
+    qa::put(p::kImageBase+session::kSimFlagsRva,std::uint32_t{2});onPoll();
+    assert(!g.armed && g.requested);++tests;
+    qa::put(p::kImageBase+session::kSimFlagsRva,std::uint32_t{0});
+    qa::publish(0,-32768,120);qa::fetch();onPoll();assert(g.armed);++tests;
+    qa::reset();dragType();onPoll();qa::arm();qa::writeLive();qa::focused=false;watchdogTick();
+    assert(!g.armed && g.requested);++tests;
+    qa::focused=true;qa::publish(0,-32768,120);qa::fetch();onPoll();assert(g.armed);++tests;
+    qa::reset();dragType();onPoll();qa::arm();qa::writeLive();qa::key=true;onPoll();qa::key=false;onPoll();
+    assert(!g.armed && !g.requested);++tests;
+    qa::reset();
+    const auto normalSlot=g_base+p::kPlayerInputVtableRva+p::kGetterSlot*4u;
+    const auto dragSlot=g_base+p::kDragInputVtableRva+p::kGetterSlot*4u;
+    qa::put(normalSlot,g_base+p::kGetControlsRva);
+    assert(installGetterHook());
+    assert(qa::get<p::Address>(normalSlot)==address(reinterpret_cast<void*>(&getControlsHook)) &&
+           qa::get<p::Address>(dragSlot)==address(reinterpret_cast<void*>(&getControlsHook)));++tests;
+    qa::reset();qa::put(normalSlot,g_base+p::kGetControlsRva);qa::put(dragSlot,std::uint32_t{0x00600000});
+    assert(!installGetterHook() && qa::get<p::Address>(normalSlot)==g_base+p::kGetControlsRva &&
+           qa::get<p::Address>(dragSlot)==0x00600000);++tests;
+    qa::reset();qa::put(normalSlot,g_base+p::kGetControlsRva);qa::failProtectOnceAt=dragSlot;
+    assert(!installGetterHook() && qa::get<p::Address>(normalSlot)==g_base+p::kGetControlsRva &&
+           qa::get<p::Address>(dragSlot)==g_base+p::kGetControlsRva && qa::logged("normal rollback=1"));++tests;
+    qa::reset();qa::put(normalSlot,g_base+p::kGetControlsRva);
+    qa::put(g_base+direction::kDragCtorRva,std::uint8_t{0});
+    assert(!installGetterHook() && qa::get<p::Address>(normalSlot)==g_base+p::kGetControlsRva);++tests;
+
+    qa::reset();qa::arm();qa::writeLive();
+    const auto inFlightSwitchWrites=qa::memoryWrites;
+    qa::duringNative=[] {
+        qa::put(qa::input,p::kImageBase+p::kDragInputVtableRva);
+        qa::put(qa::input-direction::kOwnerOffset,p::kImageBase+direction::kDragOwnerVtableRva);
+    };
+    qa::fetch();assert(!g.armed && g.requested && !g.cleanupPending &&
+                      qa::memoryWrites==inFlightSwitchWrites);++tests;
+
+    // Specialized transmission is a separate fixture from the standard gearbox.
+    auto specialTransmission=[] {
+        qa::put(qa::transmission,p::kImageBase+drive::kDragTransmissionVtableRva);
+        qa::put(p::kImageBase+drive::kDragTransmissionVtableRva+drive::kGetGearSlot*4,
+                p::kImageBase+drive::kGetGearRva);
+    };
+    qa::reset();dragType();specialTransmission();onPoll();
+    assert(drive::sample(g_base,g.player,&readMemory).status==drive::Status::Ok);++tests;
+    qa::arm();qa::writeLive();qa::fetch();
+    assert(g.armed && g.requested && qa::nativeGasArg>0.49f &&
+           qa::get<float>(qa::controls+4)==0.5f);++tests;
+    for(unsigned gear=0;gear<=9;++gear){
+        qa::put(qa::transmission+drive::kGearOffset,gear);
+        const auto d=drive::sample(g_base,g.player,&readMemory);
+        assert(d.status==drive::Status::Ok && d.gear==static_cast<int>(gear));
+    }++tests;
+    const auto specialReturnWrites=qa::memoryWrites;
+    normalType();qa::put(qa::transmission,p::kImageBase+drive::kTransmissionVtableRva);onPoll();
+    assert(!g.armed && g.requested && qa::memoryWrites==specialReturnWrites);++tests;
+    qa::publish(0,-32768,120);qa::fetch();onPoll();assert(g.armed);++tests;
+    qa::reset();specialTransmission();
+    assert(drive::sample(g_base,g.player,&readMemory).status==drive::Status::TransmissionMismatch);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();
+    qa::put(qa::transmission,std::uint32_t{0x008ABFC4u});
+    assert(drive::sample(g_base,g.player,&readMemory).status==drive::Status::TransmissionMismatch);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();
+    qa::put(g_base+drive::kDragTransmissionCtorRva,std::uint8_t{0});
+    assert(drive::sample(g_base,g.player,&readMemory).status==drive::Status::TransmissionMismatch);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();
+    qa::put(g_base+drive::kDragTransmissionVtableRva+drive::kGetGearSlot*4,std::uint32_t{0x006A0500});
+    assert(drive::sample(g_base,g.player,&readMemory).status==drive::Status::FingerprintMismatch);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();
+    qa::put(qa::transmission+drive::kGearOffset,std::uint32_t{10});
+    assert(drive::sample(g_base,g.player,&readMemory).status==drive::Status::ValueRejected);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();
+    qa::put(qa::car+drive::kTransmissionOffset,std::uint32_t{0});
+    assert(drive::sample(g_base,g.player,&readMemory).status==drive::Status::TransmissionMismatch);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();
+    g_reportIntervalMs=200;g.requested=false;g.armed=false;
+    const auto diagMemoryWrites=qa::memoryWrites;
+    diagnoseDrivetrain(qa::clock);
+    assert(qa::logged("trans_vt=008ABFC8") && qa::logged("owner_ok=1 setters_ok=1") &&
+           qa::logged("validated_gear=2") && qa::memoryWrites==diagMemoryWrites);++tests;
+    auto nDiag=qa::messages.size();diagnoseDrivetrain(qa::clock+999);
+    assert(qa::messages.size()==nDiag);++tests;
+    diagnoseDrivetrain(qa::clock+1000);assert(qa::messages.size()==nDiag+1);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();g_reportIntervalMs=200;
+    qa::put(qa::transmission,std::uint32_t{0x008ABFC4});
+    diagnoseDrivetrain(qa::clock);assert(qa::logged("DRIVE_DIAG status=4") &&
+        qa::logged("trans_vt=008ABFC4") && qa::logged("validated_gear=-1"));++tests;
+    qa::reset();dragType();specialTransmission();onPoll();g_reportIntervalMs=5000;
+    nDiag=qa::messages.size();diagnoseDrivetrain(qa::clock);assert(qa::messages.size()==nDiag);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();qa::arm();qa::writeLive();
+    qa::put(p::kImageBase+session::kSimFlagsRva,std::uint32_t{2});onPoll();
+    assert(!g.armed && g.requested);++tests;
+    qa::put(p::kImageBase+session::kSimFlagsRva,std::uint32_t{0});
+    qa::publish(0,-32768,120);qa::fetch();onPoll();assert(g.armed);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();qa::arm();qa::writeLive();
+    qa::focused=false;watchdogTick();assert(!g.armed && g.requested);++tests;
+    qa::focused=true;qa::publish(0,-32768,120);qa::fetch();onPoll();assert(g.armed);++tests;
+
+    // Separate drag HUD callback, ABI forwarding, source selection and optional failure.
+    qa::reset();dragType();qa::dragHudFixture();g_dragHudOriginal=&qa::nativeHud;g_dragHudInstalled=true;
+    qa::hudChangeValue=true;auto rpmWrites=qa::memoryWrites;
+    dragHudTickHook(ptr(qa::hudWidget),nullptr,0x7FC12345u);
+    assert(qa::hudNativeCalls==1 && qa::hudSelf==ptr(qa::hudWidget) && qa::hudArg==0x7FC12345u &&
+        g_dragHudCache.latest.status==hud::Status::Ok && g_dragHudCache.latest.current==4800 &&
+        !g_hudCache.seen && qa::memoryWrites==rpmWrites);++tests;
+    {std::lock_guard<std::mutex> controlLock(qa::lock);
+     assert(selectUdpSnapshot(qa::clock).status==hud::Status::Ok); }++tests;
+    qa::clock+=50;dragHudTickHook(ptr(qa::hudWidget),nullptr,8);
+    assert(qa::hudNativeCalls==2 && g_dragHudCaptures==1);++tests;
+    qa::clock+=50;dragHudTickHook(ptr(qa::hudWidget),nullptr,9);
+    assert(qa::hudNativeCalls==3 && g_dragHudCaptures==2);++tests;
+    qa::focused=false;assert(selectUdpSnapshot(qa::clock).status==hud::Status::ContextBlocked);++tests;
+    qa::focused=true;qa::put(g_base+session::kSimFlagsRva,std::uint32_t{2});
+    assert(selectUdpSnapshot(qa::clock).status==hud::Status::ContextBlocked);++tests;
+    qa::put(g_base+session::kSimFlagsRva,std::uint32_t{0});qa::clock+=501;
+    assert(selectUdpSnapshot(qa::clock).status==hud::Status::Stale);++tests;
+    normalType();g_hudInstalled=true;
+    assert(selectUdpSnapshot(qa::clock).status==hud::Status::NoSample);++tests;
+    qa::hudFixture();g_hudOriginal=&qa::nativeHud;hudTickHook(ptr(qa::hudWidget),nullptr,0);
+    assert(selectUdpSnapshot(qa::clock).status==hud::Status::Ok);++tests;
+    dragType();g_dragHudInstalled=false;
+    assert(selectUdpSnapshot(qa::clock).status==hud::Status::HookUnavailable);++tests;
+    qa::reset();dragType();qa::dragHudFixture();
+    assert(installDragHudHook() && g_dragHudOriginal==&qa::nativeHud && qa::mhCreates==1 && qa::mhEnables==1);++tests;
+    qa::reset();qa::dragHudFixture();qa::mhCreateStatus=7;
+    assert(!installDragHudHook() && !g_dragHudOriginal && qa::mhEnables==0);++tests;
+    qa::reset();qa::dragHudFixture();qa::mhEnableStatus=7;
+    assert(!installDragHudHook() && !g_dragHudOriginal && qa::mhRemoves==1);++tests;
+    qa::reset();qa::dragHudFixture();qa::mhNullTrampoline=true;
+    assert(!installDragHudHook() && !g_dragHudOriginal && qa::mhRemoves==1);++tests;
+    qa::reset();qa::dragHudFixture();qa::put(g_base+hud::kDragTickRva,std::uint8_t{0xE9});
+    assert(!installDragHudHook() && qa::mhCreates==0);++tests;
+    qa::reset();dragType();qa::dragHudFixture();
+    qa::duringEnable=[](){dragHudTickHook(ptr(qa::hudWidget),nullptr,0xFEED1234u);};
+    assert(installDragHudHook() && qa::hudNativeCalls==1 && qa::hudArg==0xFEED1234u);++tests;
+    qa::reset();dragType();qa::dragHudFixture();g_dragHudOriginal=&qa::nativeHud;g_ready=0;
+    dragHudTickHook(ptr(qa::hudWidget),nullptr,7);
+    assert(qa::hudNativeCalls==1 && !g_dragHudCache.seen);++tests;
+    qa::reset();dragType();specialTransmission();onPoll();qa::arm();qa::writeLive();
+    qa::dragHudFixture();g_dragHudOriginal=&qa::nativeHud;g_dragHudInstalled=true;
+    qa::put(qa::hudWidget+0x30,std::uint32_t{0});rpmWrites=qa::memoryWrites;
+    dragHudTickHook(ptr(qa::hudWidget),nullptr,8);
+    assert(g.armed && g.requested && qa::memoryWrites==rpmWrites &&
+        g_dragHudCache.latest.status==hud::Status::LayoutMismatch);++tests;
+    qa::reset();dragType();qa::dragHudFixture();g_dragHudOriginal=&qa::nativeHud;g_dragHudInstalled=true;
+    dragHudTickHook(ptr(qa::hudWidget),nullptr,0);qa::dragHudFixture(qa::hudWidget+0x1000);++qa::clock;
+    dragHudTickHook(ptr(qa::hudWidget+0x1000),nullptr,0);
+    assert(selectUdpSnapshot(qa::clock).status==hud::Status::Ambiguous);++tests;
+    qa::reset();qa::hudFixture();g_hudOriginal=&qa::nativeHud;g_hudInstalled=true;
+    hudTickHook(ptr(qa::hudWidget),nullptr,0);auto cachedNormal=g_hudCache;
+    dragType();assert(hud::select(cachedNormal,qa::clock,p::resolvePlayer(g_base,&readMemory),
+        session::sample(g_base,&readMemory),true).status==hud::Status::OwnerChanged);++tests;
+    // A normal widget cannot supply RPM for a drag player, even with a live cache.
+    qa::clock+=100;hudTickHook(ptr(qa::hudWidget),nullptr,0);
+    assert(g_hudCache.latest.status==hud::Status::ChangedDuringRead);++tests;
+    qa::dragHudFixture();g_dragHudOriginal=&qa::nativeHud;g_dragHudInstalled=true;
+    dragHudTickHook(ptr(qa::hudWidget),nullptr,0);g_reportIntervalMs=0;onPoll();
+    assert(qa::logged("source=drag") && qa::logged("HUD_TELEMETRY status=1"));++tests;
 
     std::printf("PASS: %u live-plugin mock groups (no real Windows threads/SDK/game)\n",tests);
 }

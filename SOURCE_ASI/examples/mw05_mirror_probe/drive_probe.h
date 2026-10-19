@@ -17,6 +17,15 @@ constexpr p::Address kInputVehicleOffset = 0x34u; // InputPlayer +7C, IInput at 
 constexpr p::Address kTransmissionOffset = 0xFCu;
 constexpr p::Address kVehicleInterfaceVtableRva = 0x004AA828u;
 constexpr p::Address kTransmissionVtableRva = 0x004AB720u;
+// Specialized interface found in the exact supplied executable. Only enabled
+// with the observed drag input subtype; unknown transmission tables still fail closed.
+constexpr p::Address kDragTransmissionVtableRva = 0x004ABFC8u;
+constexpr p::Address kDragTransmissionCtorRva = 0x002B3BC4u;
+constexpr unsigned char kDragTransmissionCtor[] = {
+    0xC7,0x06,0x00,0xC0,0x8A,0x00,
+    0xC7,0x46,0x08,0xF8,0xBF,0x8A,0x00,
+    0xC7,0x46,0x4C,0xC8,0xBF,0x8A,0x00
+};
 constexpr p::Address kGetGearRva = 0x002A0590u;
 constexpr p::Address kGetSpeedRva = 0x002881B0u;
 constexpr p::Address kGearOffset = 0x38u;  // mov eax,[ecx+38]; ret.
@@ -77,7 +86,8 @@ inline Snapshot sample(p::Address base, const p::Player& player, p::ReadMemory r
         !readValue(read, player.input, inputVtable))
         return failure(Status::ReadFailed);
     if (carVtable != base + p::kVehicleVtableRva || input != player.input ||
-        inputVtable != base + p::kPlayerInputVtableRva)
+        !p::supportedInputVtable(base,inputVtable) ||
+        (player.inputVtable!=0 && player.inputVtable!=inputVtable))
         return failure(Status::IdentityMismatch);
     if (!readValue(read, player.input + kInputVehicleOffset, iv))
         return failure(Status::ReadFailed);
@@ -93,7 +103,11 @@ inline Snapshot sample(p::Address base, const p::Player& player, p::ReadMemory r
         return failure(Status::TransmissionMismatch);
     if (!readValue(read, transmission, transmissionVtable))
         return failure(Status::ReadFailed);
-    if (transmissionVtable != base + kTransmissionVtableRva)
+    const bool ordinaryTransmission=transmissionVtable==base+kTransmissionVtableRva;
+    const bool dragTransmission=inputVtable==base+p::kDragInputVtableRva &&
+        transmissionVtable==base+kDragTransmissionVtableRva &&
+        matches(read,base+kDragTransmissionCtorRva,kDragTransmissionCtor);
+    if (!ordinaryTransmission && !dragTransmission)
         return failure(Status::TransmissionMismatch);
 
     p::Address gearFn = 0, speedFn = 0;
@@ -121,6 +135,7 @@ inline Snapshot sample(p::Address base, const p::Player& player, p::ReadMemory r
     p::Address lastIvVtable = 0;
     if (fresh.status != p::ResolveStatus::Unique ||
         fresh.vehicle != player.vehicle || fresh.input != player.input ||
+        fresh.inputVtable != inputVtable ||
         !readValue(read, player.vehicle + kTransmissionOffset, lastTransmission) ||
         !readValue(read, player.input + kInputVehicleOffset, lastIv) ||
         !readValue(read, transmission, lastTransmissionVtable) ||

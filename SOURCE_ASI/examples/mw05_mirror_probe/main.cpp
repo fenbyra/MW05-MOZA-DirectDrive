@@ -1,6 +1,6 @@
 // MENU TEST; user request persists through transient context loss; default OFF.
 // Uses the verified player/GetControls path from v0.5.3.
-// v0.7.12 RACE DIALOG TEST: preserves the user-tested v0.6.3 analog/native reverse path.
+// v0.7.16 DRAG TELEMETRY TEST 1: preserves the user-tested v0.6.3 analog/native reverse path.
 // No direct Shift/gear writes, FFB effects, key emulation or native axis bindings.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -61,7 +61,7 @@
 static_assert(sizeof(void*) == 4, "Use the existing MINGW32 build");
 #endif
 
-NFSMW_PLUGIN_DECLARE("MW05 MOZA DirectDrive", "0.7.12", "local")
+NFSMW_PLUGIN_DECLARE("MW05 MOZA DirectDrive", "0.7.15-drag-input-test2", "local")
 
 namespace {
 namespace p = mw05_probe;
@@ -93,6 +93,12 @@ hud::Cache g_hudCache{};
 DWORD g_hudCalls=0,g_hudCaptures=0,g_hudAttemptAt=0;
 bool g_hudAttempted=false;
 p::Address g_hudAttemptWidget=0;
+HudTick g_dragHudOriginal=nullptr;
+bool g_dragHudInstalled=false;
+hud::Cache g_dragHudCache{};
+DWORD g_dragHudCalls=0,g_dragHudCaptures=0,g_dragHudAttemptAt=0;
+bool g_dragHudAttempted=false;
+p::Address g_dragHudAttemptWidget=0;
 struct HudGuard {
     HudGuard(){AcquireSRWLockExclusive(&g_hudLock);}
     ~HudGuard(){ReleaseSRWLockExclusive(&g_hudLock);}
@@ -112,6 +118,10 @@ enum class StopReason {
 };
 struct State {
     p::Player player{};
+    bool resolverDiagSeen = false;
+    DWORD resolverDiagAt = 0;
+    bool driveDiagSeen = false;
+    DWORD driveDiagAt = 0;
     bool hookAttempted = false, hookInstalled = false, armed = false;
     bool previousKeyDown = false, playerReportPending = false;
     bool cleanupPending = false;
@@ -274,6 +284,40 @@ bool installHudHook() {
             static_cast<unsigned long>(g_base+hud::kTickRva));
     return true;
 }
+void MW05_FASTCALL dragHudTickHook(void* self,void* /*unusedEdx*/,std::uint32_t nativeArg) {
+    // Native exactly once FIRST, unchanged this/argument and no plugin lock held.
+    if (g_dragHudOriginal) g_dragHudOriginal(self,nativeArg);
+    if (InterlockedCompareExchange(&g_ready,0,0)==0) return;
+    const DWORD now=GetTickCount();
+    { HudGuard guard;
+      ++g_dragHudCalls;
+      if (g_dragHudAttempted && g_dragHudAttemptWidget==address(self) && static_cast<DWORD>(now-g_dragHudAttemptAt)<100u) return;
+      g_dragHudAttempted=true;g_dragHudAttemptAt=now;g_dragHudAttemptWidget=address(self); }
+    const auto player=p::resolvePlayer(g_base,&readMemory);
+    const auto value=gameFocused() ? hud::sample(g_base,player,address(self),&readMemory,hud::Source::Drag):
+                                  hud::failure(hud::Status::ContextBlocked);
+    { HudGuard guard;hud::publish(g_dragHudCache,value,now);++g_dragHudCaptures; }
+}
+bool installDragHudHook() {
+    if (!hud::fingerprint(g_base,&readMemory,hud::Source::Drag) || !nfsmw__mh_ensure_init()) {
+        logLine("DRAG_HUD_HOOK refused: fingerprint/init mismatch; controls unchanged");return false;
+    }
+    void* const target=ptr(g_base+hud::kDragTickRva);
+    void* trampoline=nullptr;
+    const MH_STATUS made=MH_CreateHook(target,reinterpret_cast<void*>(&dragHudTickHook),&trampoline);
+    if (made!=MH_OK || !trampoline) {
+        if (made==MH_OK) MH_RemoveHook(target);
+        logLine("DRAG_HUD_HOOK refused: create status=%d; controls unchanged",static_cast<int>(made));return false;
+    }
+    g_dragHudOriginal=reinterpret_cast<HudTick>(trampoline); // BEFORE enable.
+    if (MH_EnableHook(target)!=MH_OK) {
+        MH_RemoveHook(target);g_dragHudOriginal=nullptr;
+        logLine("DRAG_HUD_HOOK refused: enable failed; controls unchanged");return false;
+    }
+    logLine("DRAG_HUD_HOOK installed=1 target=%08lX; native tick called once; read after tick; no memory scan; optional separate UDP worker",
+            static_cast<unsigned long>(g_base+hud::kDragTickRva));
+    return true;
+}
 bool escapeDown() {
     return ((GetAsyncKeyState(VK_ESCAPE) | GetAsyncKeyState(VK_PAUSE)) & 0x8000) != 0;
 }
@@ -329,7 +373,8 @@ void cleanupAxes() {
     // a cached player, then never write an old/disappeared/ambiguous object.
     const p::Player fresh = p::resolvePlayer(g_base, &readMemory);
     if (fresh.status != g.player.status || fresh.input != g.player.input ||
-        fresh.vehicle != g.player.vehicle) g.playerReportPending = true;
+        fresh.inputVtable != g.player.inputVtable || fresh.vehicle != g.player.vehicle) g.playerReportPending = true;
+    if(fresh.inputVtable!=g.player.inputVtable)forgetOwnership();
     g.player = fresh;
     if (g.lastWrittenInput == 0 || g.player.status != p::ResolveStatus::Unique ||
         g.player.input != g.lastWrittenInput) {
@@ -415,7 +460,7 @@ void enforceSafety(DWORD now) {
 
 struct DirectionLease {
     bool prepared = false;
-    p::Address input = 0, vehicle = 0, previousWrittenInput = 0;
+    p::Address input = 0, vehicle = 0, inputVtable = 0, previousWrittenInput = 0;
     DWORD sampleTick = 0;
     m::Axes command{};
     m::OwnedAxis previousGas{}, previousBrake{};
@@ -445,7 +490,7 @@ void MW05_FASTCALL directionHook(void* self, void* /*unusedEdx*/,
                 const drive::Snapshot snapshot = drive::sample(g_base, g.player, &readMemory);
                 const bool ownerOk = direction::ownerMatches(
                     g_base, g.player, address(self), &readMemory);
-                const bool settersOk = direction::settersMatch(g_base, &readMemory);
+                const bool settersOk = direction::settersMatch(g_base, &readMemory, g.player.inputVtable);
                 enforceSafety(GetTickCount()); // AFTER validation I/O.
                 if (g.armed && (snapshot.status != drive::Status::Ok ||
                                 !ownerOk || !settersOk)) {
@@ -458,6 +503,7 @@ void MW05_FASTCALL directionHook(void* self, void* /*unusedEdx*/,
                         lease.prepared = true;
                         lease.input = g.player.input;
                         lease.vehicle = g.player.vehicle;
+                        lease.inputVtable = g.player.inputVtable;
                         lease.sampleTick = g.sdkSample.readStartedTick;
                         lease.command = command;
                         lease.previousWrittenInput = g.lastWrittenInput;
@@ -486,7 +532,9 @@ void MW05_FASTCALL directionHook(void* self, void* /*unusedEdx*/,
         const p::Player fresh = p::resolvePlayer(g_base, &readMemory);
         if (!g.directionLeasePoisoned && fresh.status == p::ResolveStatus::Unique &&
             fresh.input == lease.input && fresh.vehicle == lease.vehicle &&
-            g.player.input == lease.input && g.player.vehicle == lease.vehicle) {
+            fresh.inputVtable == lease.inputVtable &&
+            g.player.input == lease.input && g.player.vehicle == lease.vehicle &&
+            g.player.inputVtable == lease.inputVtable) {
             // No helper call with MOZA arguments was made: undo its staged
             // ownership before the untouched native call below.
             g.lastWrittenInput = lease.previousWrittenInput;
@@ -514,7 +562,9 @@ void MW05_FASTCALL directionHook(void* self, void* /*unusedEdx*/,
         } else {
             const p::Player fresh = p::resolvePlayer(g_base, &readMemory);
             if (fresh.status != p::ResolveStatus::Unique ||
-                fresh.input != lease.input || fresh.vehicle != lease.vehicle) {
+                fresh.input != lease.input || fresh.vehicle != lease.vehicle ||
+                fresh.inputVtable != lease.inputVtable) {
+                if(fresh.inputVtable!=lease.inputVtable)forgetOwnership();
                 g.player = fresh;
                 g.playerReportPending = true;
                 stopTest(StopReason::PlayerChanged);
@@ -570,7 +620,7 @@ bool releasePedalsToNative(p::Address input) {
     const p::Player fresh = p::resolvePlayer(g_base, &readMemory);
     if (fresh.status != p::ResolveStatus::Unique ||
         fresh.status != g.player.status || fresh.input != input ||
-        fresh.input != g.player.input || fresh.vehicle != g.player.vehicle ||
+        fresh.input != g.player.input || fresh.inputVtable != g.player.inputVtable || fresh.vehicle != g.player.vehicle ||
         g.lastWrittenInput != input) {
         g.player = fresh;
         g.playerReportPending = true;
@@ -683,10 +733,8 @@ void* MW05_FASTCALL getControlsHook(void* self, void* /*unusedEdx*/) {
     return result;
 }
 
-bool installGetterHook() {
-    g.hookAttempted = true;
-    const p::Address slot = g_base + p::kPlayerInputVtableRva +
-                            p::kGetterSlot * sizeof(p::Address);
+bool installGetterSlot(p::Address vtable) {
+    const p::Address slot = vtable + p::kGetterSlot * sizeof(p::Address);
     p::Address current = 0;
     const p::Address expected = g_base + p::kGetControlsRva;
     if (!readValue(slot, current) || current != expected) {
@@ -716,15 +764,138 @@ bool installGetterHook() {
         return false;
     }
     logLine("HOOK installed=1 vtable=%08lX slot=2 original=%08lX; getter code UNCHANGED",
-            static_cast<unsigned long>(g_base+p::kPlayerInputVtableRva),
+            static_cast<unsigned long>(vtable),
             static_cast<unsigned long>(expected));
     return true;
+}
+
+bool rollbackGetterSlot(p::Address vtable) {
+    const p::Address slot=vtable+p::kGetterSlot*sizeof(p::Address);
+    DWORD oldProtection=0,ignored=0;
+    if(!VirtualProtect(ptr(slot),sizeof(p::Address),PAGE_EXECUTE_READWRITE,&oldProtection))return false;
+    void* const replacement=reinterpret_cast<void*>(&getControlsHook);
+    const auto prior=InterlockedCompareExchangePointer(
+        reinterpret_cast<PVOID volatile*>(ptr(slot)),ptr(g_base+p::kGetControlsRva),replacement);
+    const bool restored=VirtualProtect(ptr(slot),sizeof(p::Address),oldProtection,&ignored)!=0;
+    return (prior==replacement || prior==ptr(g_base+p::kGetControlsRva)) && restored;
+}
+bool installGetterHook() {
+    g.hookAttempted=true;
+    const p::Address normal=g_base+p::kPlayerInputVtableRva;
+    const p::Address drag=g_base+p::kDragInputVtableRva;
+    p::Address normalGetter=0;
+    // Preflight BOTH slots before changing either one. Unknown/modded layouts fail closed.
+    if(!direction::dragFingerprint(g_base,&readMemory) ||
+       !readValue(normal+p::kGetterSlot*4u,normalGetter) || normalGetter!=g_base+p::kGetControlsRva) {
+        logLine("HOOK REFUSED: normal/drag preflight mismatch; no getter slot changed");return false;
+    }
+    if(!installGetterSlot(normal))return false;
+    if(!installGetterSlot(drag)) {
+        const bool rolledBack=rollbackGetterSlot(normal);
+        logLine("HOOK REFUSED: drag install failed; normal rollback=%d",rolledBack?1:0);
+        return false;
+    }
+    logLine("DRAG_INPUT supported=1 normal_vt=008AC670 drag_vt=008AC708; paired owners; native helper unchanged; specialized transmission allowed only with drag input; RPM source still normal HUD");
+    return true;
+}
+
+// Diagnostic only: bounded, read-only observations, never a fallback resolver.
+// Called only from onPoll under the existing state lock AFTER safety handling.
+void diagnosePlayerRows(DWORD now) {
+    if (g_reportIntervalMs != 200u || !g.requested ||
+        g.player.status == p::ResolveStatus::Unique) return;
+    const auto context = session::sample(g_base, &readMemory);
+    if (!context.readable || context.flow != 6) return;
+    if (g.resolverDiagSeen && static_cast<DWORD>(now-g.resolverDiagAt) < 1000u) return;
+    g.resolverDiagSeen=true; g.resolverDiagAt=now;
+    p::VehicleContainer header{};
+    const bool readable=readValue(g_base+p::kVehicleContainerRva,header);
+    logLine("RESOLVER_DIAG status=%d flow=%lu flags=%08lX header_read=%d "
+            "vtable=%08lX data=%08lX capacity=%lu count=%lu; read-only, not a fallback",
+            static_cast<int>(g.player.status),static_cast<unsigned long>(context.flow),
+            static_cast<unsigned long>(context.flags),readable?1:0,
+            static_cast<unsigned long>(header.vtable),static_cast<unsigned long>(header.data),
+            static_cast<unsigned long>(header.capacity),static_cast<unsigned long>(header.count));
+    if (!readable || header.vtable!=g_base+p::kVehicleContainerVtableRva ||
+        header.data!=g_base+p::kVehicleListRva || header.capacity!=p::kMaxVehicles ||
+        header.count>header.capacity) return;
+    for (unsigned i=0;i<header.count;++i) {
+        p::VehicleEntry row{};
+        p::Address cv=0,input=0,iv=0,back=0,getter=0;
+        const bool rowOk=readValue(header.data+i*sizeof(row),row);
+        // Keep every read bounded within the 32-bit address space.
+        const bool carOk=rowOk && p::pointerLike(row.vehicle) && row.vehicle<=0xFFFFFE00u;
+        const bool cvOk=carOk && readValue(row.vehicle,cv);
+        const bool inputOk=carOk && readValue(row.vehicle+p::kVehicleInputOffset,input);
+        const bool inputSafe=inputOk && p::pointerLike(input) && input<=0xFFFFFE00u;
+        const bool ivOk=inputSafe && readValue(input,iv);
+        const bool backOk=inputSafe && readValue(input+drive::kInputVehicleOffset,back);
+        const bool getterOk=ivOk && p::pointerLike(iv) && iv<=0xFFFFFF00u &&
+            readValue(iv+p::kGetterSlot*4u,getter);
+        const char* reason=!rowOk?"row-read-failed":row.vehicle==0?"null-row":
+            row.enabled!=1?"disabled":!carOk?"car-pointer":!cvOk?"car-read-failed":
+            cv!=g_base+p::kVehicleVtableRva?"car-vtable":!inputOk?"input-read-failed":
+            !inputSafe?"input-pointer":!ivOk?"input-vtable-read-failed":
+            !p::supportedInputVtable(g_base,iv)?"input-vtable":"matches-resolver-filters";
+        logLine("RESOLVER_ROW index=%u row_read=%d enabled=%u car=%08lX car_vt=%08lX "
+                "input_read=%d input=%08lX input_vt_read=%d input_vt=%08lX "
+                "back_read=%d back_iv=%08lX getter_read=%d getter=%08lX reject=%s",
+                i,rowOk?1:0,static_cast<unsigned>(row.enabled),
+                static_cast<unsigned long>(row.vehicle),static_cast<unsigned long>(cv),
+                inputOk?1:0,static_cast<unsigned long>(input),ivOk?1:0,
+                static_cast<unsigned long>(iv),backOk?1:0,static_cast<unsigned long>(back),
+                getterOk?1:0,static_cast<unsigned long>(getter),reason);
+    }
+    p::VehicleContainer after{};
+    const bool stable=readValue(g_base+p::kVehicleContainerRva,after) &&
+                      p::sameContainer(header,after);
+    logLine("RESOLVER_DIAG_END header_stable=%d; rows are observations, not identity proof",stable?1:0);
+}
+
+// Read-only report remains available after a validation fault cleared requested.
+// Actual gear/speed are ONLY exposed by drive::sample after all original checks.
+void diagnoseDrivetrain(DWORD now) {
+    if(g_reportIntervalMs!=200u || g.player.status!=p::ResolveStatus::Unique)return;
+    const auto context=session::sample(g_base,&readMemory);
+    if(!context.readable || context.flow!=6)return;
+    if(g.driveDiagSeen && static_cast<DWORD>(now-g.driveDiagAt)<1000u)return;
+    g.driveDiagSeen=true;g.driveDiagAt=now;
+    const auto snapshot=drive::sample(g_base,g.player,&readMemory);
+    if(snapshot.status==drive::Status::Ok && g.player.inputVtable!=g_base+p::kDragInputVtableRva)return;
+    p::Address transmission=0,tvt=0,gearFn=0,iv=0,ivt=0,speedFn=0,ownerVt=0;
+    const bool tr=readValue(g.player.vehicle+drive::kTransmissionOffset,transmission);
+    const bool ts=tr && p::pointerLike(transmission) && transmission<=0xFFFFFE00u;
+    const bool tvr=ts && readValue(transmission,tvt);
+    const bool tSafe=tvr && p::pointerLike(tvt) && tvt<=0xFFFFFF00u;
+    const bool gr=tSafe && readValue(tvt+drive::kGetGearSlot*4u,gearFn);
+    const bool ir=readValue(g.player.input+drive::kInputVehicleOffset,iv);
+    const bool is=ir && p::pointerLike(iv) && iv<=0xFFFFFE00u;
+    const bool ivr=is && readValue(iv,ivt);
+    const bool ivSafe=ivr && p::pointerLike(ivt) && ivt<=0xFFFFFF00u;
+    const bool sr=ivSafe && readValue(ivt+drive::kGetSpeedSlot*4u,speedFn);
+    const bool ownerRead=g.player.input>=direction::kOwnerOffset &&
+        readValue(g.player.input-direction::kOwnerOffset,ownerVt);
+    const bool ownerOk=direction::ownerMatches(g_base,g.player,g.player.input-direction::kOwnerOffset,&readMemory);
+    const bool settersOk=direction::settersMatch(g_base,&readMemory,g.player.inputVtable);
+    logLine("DRIVE_DIAG status=%u car=%08lX input=%08lX input_vt=%08lX "
+            "trans_read=%d trans=%08lX trans_vt_read=%d trans_vt=%08lX "
+            "gear_fn_read=%d gear_fn=%08lX iv_read=%d iv=%08lX iv_vt_read=%d iv_vt=%08lX "
+            "speed_fn_read=%d speed_fn=%08lX owner_read=%d owner_vt=%08lX owner_ok=%d setters_ok=%d "
+            "validated_gear=%d validated_speed=%+.5f requested=%d armed=%d; read-only",
+            static_cast<unsigned>(snapshot.status),static_cast<unsigned long>(g.player.vehicle),
+            static_cast<unsigned long>(g.player.input),static_cast<unsigned long>(g.player.inputVtable),
+            tr?1:0,static_cast<unsigned long>(transmission),tvr?1:0,static_cast<unsigned long>(tvt),
+            gr?1:0,static_cast<unsigned long>(gearFn),ir?1:0,static_cast<unsigned long>(iv),
+            ivr?1:0,static_cast<unsigned long>(ivt),sr?1:0,static_cast<unsigned long>(speedFn),
+            ownerRead?1:0,static_cast<unsigned long>(ownerVt),ownerOk?1:0,settersOk?1:0,
+            snapshot.gear,snapshot.speed,g.requested?1:0,g.armed?1:0);
 }
 
 void updatePlayer(bool report) {
     const p::Player fresh = p::resolvePlayer(g_base, &readMemory);
     const bool changed = fresh.status != g.player.status || fresh.input != g.player.input ||
-                         fresh.vehicle != g.player.vehicle;
+                         fresh.inputVtable != g.player.inputVtable || fresh.vehicle != g.player.vehicle;
+    if(fresh.inputVtable!=g.player.inputVtable)forgetOwnership();
     g.player = fresh; // Must precede stop/cleanup.
     if (changed) {
         g.playerReportPending = true;
@@ -741,9 +912,9 @@ void updatePlayer(bool report) {
             static_cast<unsigned long>(listHeader.data),
             static_cast<unsigned long>(listHeader.capacity),static_cast<unsigned long>(listHeader.count));
     if (fresh.status == p::ResolveStatus::Unique)
-        logLine("PLAYER car=%08lX input=%08lX controls=%08lX",
+        logLine("PLAYER car=%08lX input=%08lX controls=%08lX input_vt=%08lX",
                 static_cast<unsigned long>(fresh.vehicle), static_cast<unsigned long>(fresh.input),
-                static_cast<unsigned long>(fresh.controls));
+                static_cast<unsigned long>(fresh.controls), static_cast<unsigned long>(fresh.inputVtable));
     else logLine("PLAYER unavailable status=%d; no writes allowed", static_cast<int>(fresh.status));
 }
 void handleToggle(DWORD now) {
@@ -792,7 +963,7 @@ void handleToggle(DWORD now) {
             if (drivetrain.status != drive::Status::Ok ||
                 !direction::ownerMatches(g_base, g.player,
                     g.player.input - direction::kOwnerOffset, &readMemory) ||
-                !direction::settersMatch(g_base, &readMemory)) {
+                !direction::settersMatch(g_base, &readMemory, g.player.inputVtable)) {
                 logLine("TOGGLE IGNORED: drivetrain/owner/setter validation failed");
             } else if (!readValue(g.player.controls, sample)) {
                 logLine("TOGGLE IGNORED: controls unreadable");
@@ -844,7 +1015,7 @@ void tryResume() {
     if (drivetrain.status!=drive::Status::Ok ||
         !direction::ownerMatches(g_base,g.player,
             g.player.input-direction::kOwnerOffset,&readMemory) ||
-        !direction::settersMatch(g_base,&readMemory)) {
+        !direction::settersMatch(g_base,&readMemory,g.player.inputVtable)) {
         // A replacement player must settle before owner/drive validation can pass.
         updatePlayer(false);
         stopTest(StopReason::DriveInvalid);
@@ -861,7 +1032,7 @@ void tryResume() {
     // Fresh identity check AFTER the I/O: never auto-arm a replaced object.
     const p::Player fresh=p::resolvePlayer(g_base,&readMemory);
     if (fresh.status!=p::ResolveStatus::Unique || fresh.input!=g.player.input ||
-        fresh.vehicle!=g.player.vehicle) {
+        fresh.inputVtable!=g.player.inputVtable || fresh.vehicle!=g.player.vehicle) {
         updatePlayer(false); g.resumeNeutral.tracking=false; return;
     }
     const DWORD finalNow=GetTickCount();
@@ -1049,6 +1220,8 @@ void onPoll() {
 
     handleToggle(now);
     tryResume();
+    diagnosePlayerRows(now);
+    diagnoseDrivetrain(now);
     if (static_cast<DWORD>(now - g.reportAt) < g_reportIntervalMs) return;
     g.reportAt = now;
     p::InputControls game{};
@@ -1060,20 +1233,22 @@ void onPoll() {
     const drive::Snapshot drivetrain = drive::sample(g_base, g.player, &readMemory);
     const session::Snapshot gate=session::sample(g_base,&readMemory);
     // Read-only HUD diagnostic. Never controls axes/request/menu/bridge.
+    const bool dragHud=hud::isDrag(g_base,g.player);
     hud::Snapshot ht{};DWORD hudCalls=0,hudCaptures=0,hudAge=0;
     { HudGuard hudGuard;
-      ht=hud::select(g_hudCache,now,g.player,gate,gameFocused());
-      hudCalls=g_hudCalls;hudCaptures=g_hudCaptures;
-      hudAge=g_hudCache.seen ? now-g_hudCache.at:0; }
-    if (!g_hudInstalled) ht=hud::failure(hud::Status::HookUnavailable);
+      const auto& cache=dragHud?g_dragHudCache:g_hudCache;
+      ht=hud::select(cache,now,g.player,gate,gameFocused());
+      hudCalls=dragHud?g_dragHudCalls:g_hudCalls;hudCaptures=dragHud?g_dragHudCaptures:g_hudCaptures;
+      hudAge=cache.seen ? now-cache.at:0; }
+    if (!(dragHud?g_dragHudInstalled:g_hudInstalled)) ht=hud::failure(hud::Status::HookUnavailable);
     logLine("HUD_TELEMETRY status=%u hud=%08lX vehicle_context=%08lX age_ms=%lu "
             "current_hud=%.3f threshold_hud=%.3f scale_hud=%.3f gear_hud=%d active=%d "
-            "hook_calls_total=%lu captures_total=%lu; HUD source, not engine limiter; UDP is optional and independent",
+            "hook_calls_total=%lu captures_total=%lu source=%s; HUD source, not engine limiter; UDP is optional and independent",
             static_cast<unsigned>(ht.status),static_cast<unsigned long>(ht.widget),
             static_cast<unsigned long>(ht.vehicle),static_cast<unsigned long>(hudAge),
             static_cast<double>(ht.current),static_cast<double>(ht.threshold),
             static_cast<double>(ht.scale),ht.gear,ht.active?1:0,
-            static_cast<unsigned long>(hudCalls),static_cast<unsigned long>(hudCaptures));
+            static_cast<unsigned long>(hudCalls),static_cast<unsigned long>(hudCaptures),dragHud?"drag":"normal");
     if (g_menuEnabled) {
         DWORD calls=0,supplied=0,native=0,merged=0;int action=-1;
         { MenuGuard menuGuard;calls=g_menuCalls;supplied=g_menuSupplied;action=g_menuLastAction;native=g_menuLastNative;merged=g_menuLastMerged; }
@@ -1129,13 +1304,16 @@ void onPoll() {
 }
 
 hud::Snapshot selectUdpSnapshot(std::uint32_t now) {
-    if(InterlockedCompareExchange(&g_ready,0,0)==0 || !g_hudInstalled)
+    if(InterlockedCompareExchange(&g_ready,0,0)==0)
         return hud::failure(hud::Status::HookUnavailable);
     const auto player=p::resolvePlayer(g_base,&readMemory);
+    if(player.status!=p::ResolveStatus::Unique)return hud::failure(hud::Status::NoPlayer);
+    const bool drag=hud::isDrag(g_base,player);
+    if(!(drag?g_dragHudInstalled:g_hudInstalled))return hud::failure(hud::Status::HookUnavailable);
     const auto context=session::sample(g_base,&readMemory);
     const bool focused=gameFocused();
     HudGuard guard;
-    return hud::select(g_hudCache,now,player,context,focused);
+    return hud::select(drag?g_dragHudCache:g_hudCache,now,player,context,focused);
 }
 DWORD WINAPI telemetryThread(void*) {
     while(InterlockedCompareExchange(&g_ready,0,0)==0)Sleep(10);
@@ -1183,11 +1361,11 @@ bool openLogAndConfig() {
 #else
     g_log = _wfopen(path, L"wb");
 #endif
-    logLine("MW05 MOZA DirectDrive v0.7.12 RACE DIALOG TEST; default OFF; LIVE axes via MSVC C-ABI bridge; no FFB calls");
+    logLine("MW05 MOZA DirectDrive v0.7.16 DRAG TELEMETRY TEST 1; default OFF; LIVE axes via MSVC C-ABI bridge; no FFB calls");
     logLine("HUD_TELEMETRY: 0=no-sample 1=ok 2=no-player 3=context-blocked 4=layout-mismatch "
             "5=read-failed 6=value-rejected 7=changed-during-read 8=inactive 9=stale "
             "10=player-context-changed 11=ambiguous-HUD 12=hook-unavailable; invalid fields zero/gear=-1; "
-            "one optional HUD tick hook; no game data writes; optional loopback RPM output; no FFB calls");
+            "separate optional normal/drag HUD tick hooks; no game data writes; optional loopback RPM output; no FFB calls");
     logLine("COUNTED_LIST header=009352A0 data=009352B0 capacity=160; scan active count only; stale tail ignored; header rechecked");
     logLine("TRANSITION_FIX duplicate rows of the same validated vehicle/input pair count once; different identities remain ambiguous; no session mask change; automatic player rebind skips neutral only for previously-active intent");
     logLine("MENU_ARM front-end flow=3; S2/F8 queues neutral-approved intent, no axis writes; race entry requires all runtime gates; manual OFF cancels");
@@ -1292,7 +1470,8 @@ NFSMW_PLUGIN_MAIN() {
     if (!poll) return NFSMW_FAIL;
     const bool menuInstalled=installMenuHook();
     if (g_menuEnabled && !menuInstalled) g_menuEnabled=false; // immutable before workers start
-    g_hudInstalled=installHudHook(); // Optional diagnostic; failure cannot disable working controls.
+    g_hudInstalled=installHudHook(); // Optional; independent from controls.
+    g_dragHudInstalled=installDragHudHook(); // Separate drag widget and cache.
     HANDLE watchdog = CreateThread(nullptr, 0, &watchdogThread, nullptr, 0, nullptr);
     if (!watchdog) {
         logLine("DISABLED: watchdog creation failed error=%lu", GetLastError());
@@ -1312,7 +1491,7 @@ NFSMW_PLUGIN_MAIN() {
     }
     g.previousKeyDown = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
     g.reportAt = GetTickCount();
-    if(g_udpEnabled && g_hudInstalled){
+    if(g_udpEnabled && (g_hudInstalled || g_dragHudInstalled)){
         HANDLE telemetry=CreateThread(nullptr,0,&telemetryThread,nullptr,0,nullptr);
         if(telemetry)CloseHandle(telemetry);
         else logLine("UDP_START failed thread error=%lu; controls unchanged",GetLastError());

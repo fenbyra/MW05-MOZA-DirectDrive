@@ -1,0 +1,27 @@
+PASS: 25 counted-container resolver/layout groups
+PASS: 2 observed drag-row replays (not live game)
+PASS: 2 explosion snapshot replays with OBSERVED container headers and stale tails (not live game)
+PASS: 2 legacy transition ROW-content regressions with synthetic count metadata
+PASS: 14 MOZA core groups; all 65,536 pedal raw values checked
+PASS: 22 read-only drivetrain diagnostic groups
+PASS: 14 direction core groups; analog mapping exhaustive over 65,536 raw values
+PASS: 7 session-gate groups, all 32 flag bits checked
+PASS: button edge/release/focus/stale/wrap tests
+PASS: UI mask all256players/all256rawstates/native preservation/context/release/stale/wrap
+PASS: 25 read-only telemetry groups (candidate units NOT physically verified)
+PASS: 36 read-only HUD core groups
+PASS: 21 UDP packet/stream/transport mock groups (not Pit House acceptance)
+PASS: 315 live-plugin mock groups (no real Windows threads/SDK/game)
+PASS: 21 DirectInput reader mock groups (not Windows ABI/device validation)
+PASS: plain C header/layout check
+HOST QA OK. This does not produce an ASI or MSVC bridge DLL.
+
+PASS: 22 offline PE fingerprint checks; exact user EXE SHA256 matched.
+
+PASS: exact EXE SHA256; drag constructor, base-fetch delegation, both getter/steer/gas/brake tables and common getter/setter code verified offline.
+PASS: specialized transmission constructor, base constructor call, shared GetGear and +38 layout verified offline; live transmission table remains to be observed.
+
+PASS: 18 exact-EXE normal+drag HUD code/layout/vtable checks; Windows/physical integration pending
+
+NOTE: the inherited drag verifier message about runtime observation is historical; latest v0.7.15 log confirms trans_vt=008ABFC8. New drag HUD runtime remains untested.
+Non-HUD headers verified byte-identical to Input Test 2. Windows ASI not built here.

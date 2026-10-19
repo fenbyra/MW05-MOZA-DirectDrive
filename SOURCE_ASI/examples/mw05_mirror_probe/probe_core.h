@@ -13,6 +13,12 @@ constexpr Address kImageBase = 0x00400000u;
 constexpr Address kVehicleListRva = 0x005352B0u;
 constexpr Address kVehicleVtableRva = 0x004AA9D8u;
 constexpr Address kPlayerInputVtableRva = 0x004AC670u;
+// Observed in both drag replays; constructor verified in the supplied executable.
+constexpr Address kDragInputVtableRva = 0x004AC708u;
+inline bool supportedInputVtable(Address base, Address vtable) {
+    return base==kImageBase && (vtable==base+kPlayerInputVtableRva ||
+                               vtable==base+kDragInputVtableRva);
+}
 constexpr Address kGetControlsRva = 0x0029CBB0u;
 constexpr Address kVehicleInputOffset = 0xE8u;
 constexpr Address kControlsOffset = 0x08u;
@@ -74,6 +80,7 @@ struct Player {
     Address vehicle = 0;
     Address input = 0;
     Address controls = 0;
+    Address inputVtable = 0; // Included in live identity across normal/drag transitions.
 };
 
 inline bool pointerLike(Address a) {
@@ -108,7 +115,7 @@ inline Player resolvePlayer(Address base, ReadMemory read) {
             !read(entry.vehicle + kVehicleInputOffset, &input, sizeof(input)) ||
             !pointerLike(input) ||
             !read(input, &inputVtable, sizeof(inputVtable)) ||
-            inputVtable != base + kPlayerInputVtableRva)
+            !supportedInputVtable(base,inputVtable))
             continue;
         // A transition can leave repeated rows for ONE validated vehicle/input pair.
         // Count identities, not table occurrences; never merge different vehicles
@@ -118,7 +125,7 @@ inline Player resolvePlayer(Address base, ReadMemory read) {
             return {ResolveStatus::Ambiguous, 0, 0, 0};
         }
         ++matches;
-        result = {ResolveStatus::Unique, entry.vehicle, input, input + kControlsOffset};
+        result = {ResolveStatus::Unique, entry.vehicle, input, input + kControlsOffset, inputVtable};
     }
     VehicleContainer after{};
     if (!read(base+kVehicleContainerRva,&after,sizeof(after)))

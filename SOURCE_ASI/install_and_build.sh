@@ -53,8 +53,8 @@ cmake -S . -B build 2>&1 | tee "$backup/configure.log"
 cmake --build build --target mw05_mirror_probe -j4 2>&1 | tee "$backup/build.log"
 asi="$sdk/build/examples/mw05_mirror_probe.asi"
 [[ -s "$asi" ]] || { echo "STOP: ASI output missing: $asi" >&2; exit 1; }
-grep -aFq 'MW05 MOZA DirectDrive v0.7.12 RACE DIALOG TEST' "$asi" || {
-  echo "STOP: output ASI does not contain the v0.7.12 RACE DIALOG TEST runtime banner." >&2; exit 1;
+grep -aFq 'MW05 MOZA DirectDrive v0.7.16 DRAG TELEMETRY TEST 1' "$asi" || {
+  echo "STOP: output ASI does not contain the v0.7.16 DRAG TELEMETRY TEST 1 runtime banner." >&2; exit 1;
 }
 echo
 ls -l "$asi"
@@ -69,5 +69,5 @@ if command -v objdump >/dev/null; then
 fi
 echo
 echo "ASI BUILD OK. NOTHING has been copied to the game."
-echo "v0.7.12 RACE DIALOG TEST ASI-only update: keep the WORKING bridge, SDK DLL and INI."
+echo "v0.7.16 DRAG TELEMETRY TEST 1 ASI-only update: keep the WORKING bridge, SDK DLL and INI."
 echo "Do NOT rebuild the MSVC bridge for this update. Follow README_RU.md."

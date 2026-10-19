@@ -85,6 +85,7 @@ int main() {
     constexpr p::Address owner=0x0320F560;
     player.input=owner+dir::kOwnerOffset;
     put(owner,p::kImageBase+dir::kOwnerVtableRva);
+    put(player.input,p::kImageBase+p::kPlayerInputVtableRva);
     assert(dir::ownerMatches(p::kImageBase,player,owner,&read)); ++tests;
     assert(!dir::ownerMatches(p::kImageBase,player,owner+4,&read));
     assert(!dir::ownerMatches(p::kImageBase,player,0xFFFFFFFC,&read));

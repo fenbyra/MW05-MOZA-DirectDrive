@@ -1,4 +1,6 @@
-﻿MW05 MOZA DirectDrive v0.7.12 — public distribution package
+CURRENT UPDATE: v0.7.16 fixes Drag input and RPM LEDs. Install v0.7.12 first, then the v0.7.16 Update ZIP. See docs/RELEASE_v0.7.16.md. The following v0.7.12 base-install instructions remain applicable.
+
+MW05 MOZA DirectDrive v0.7.12 — public distribution package
 
 Ready-built plugin and bridge for Need for Speed: Most Wanted (2005) x86 v1.3.
 Tested setup: MOZA R3 + ES + SR-P Lite, Pit House 1.4.1.13. Other hardware,

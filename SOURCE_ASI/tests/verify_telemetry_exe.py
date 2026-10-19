@@ -12,6 +12,13 @@ def read(va,size):
   if vr<=rva and rva+size<=vr+rs:return b[raw+rva-vr:raw+rva-vr+size]
  raise AssertionError(hex(va))
 checks={
+ 0x57d130:'83 ec 2c 56 8b f1',
+ 0x57d2db:'5e 83 c4 2c c2 04 00',
+ 0x8a261c:'b0 12 5a 00 30 d1 57 00',
+ 0x8a2630:'90 12 5a 00 30 12 5a 00 40 12 5a 00',
+ 0x57d144:'d9 46 54 57 d8 76 5c',0x57d19f:'d9 46 54 d8 5e 58',
+ 0x5a0f3e:'8d 6e 30',0x5a0f87:'c7 45 00 30 26 8a 00',
+ 0x5a0f9a:'c7 06 1c 26 8a 00 c7 03 18 26 8a 00',
  0x57a6e0:'83 ec 30 56 8b f1',
  0x57a8b7:'5e 83 c4 30 c2 04 00',0x57a8f2:'5e 83 c4 30 c2 04 00',
  0x8a2260:'c0 eb 59 00 e0 a6 57 00',
@@ -22,4 +29,4 @@ checks={
 for va,data in checks.items():assert read(va,len(bytes.fromhex(data)))==bytes.fromhex(data),hex(va)
 result={'sha256':digest,'checks':{f'{x:08X}':y for x,y in checks.items()},'limit':'HUD code/layout verified statically; real hook integration/ownership/physical comparison pending'}
 if a.out:a.out.write_text(json.dumps(result,indent=2))
-print('PASS: 9 exact-EXE HUD code/layout/vtable checks; Windows/physical integration pending')
+print('PASS: 18 exact-EXE normal+drag HUD code/layout/vtable checks; Windows/physical integration pending')
